@@ -1,0 +1,287 @@
+#!/bin/bash
+echo "beginning execution"
+chmod +x checkstack.py aliascdn.py
+bucket1="punguzamizigo.com"
+bucket2="www.punguzamizigo.com"
+stackname="myteststack"
+
+if aws s3 ls "s3://$bucket1" 2>&1 | grep -q 'NoSuchBucket' || aws s3 ls "s3://$bucket2" 2>&1 | grep -q 'NoSuchBucket'
+then
+    echo "buckets $bucket1 and $bucket2 will be created by cloudformation"
+else
+	aws s3 rb "s3://$bucket1" --force
+	aws s3 rb "s3://$bucket2" --force
+    echo "buckets $bucket1 and $bucket2 have been deleted. Deployment continues"
+fi
+./checkstack.py $stackname
+echo "creating $stackname stack"
+aws cloudformation create-stack --stack-name $stackname --template-body file://git.json --parameters ParameterKey=DomainName,ParameterValue=punguzamizigo.com ParameterKey=IAMDeployUser,ParameterValue=admin
+aws cloudformation wait stack-create-complete --stack-name $stackname
+echo "Done Creating $stackname"
+aws s3 cp index.html "s3://$bucket1"
+aws s3 cp index.html "s3://$bucket2"
+echo "Done creating buckets and uploading files"
+echo "Now creating cloudfront distribution"
+aws cloudfront create-distribution   --origin-domain-name $bucket1.s3-website-us-east-1.amazonaws.com   --default-root-object index.html > cloudfront.json
+./aliascdn.py
+
+#creates A record pointing to IP of server
+aws route53 change-resource-record-sets --hosted-zone-id Z1KX47X4Z9TPPK --change-batch file://arecord.json
+
+
+
+
+
+
+******************************************************************************************************************************************
+checkstack.py
+
+
+
+
+checkstack.py
+#!/usr/bin/python3
+import boto3
+import sys
+
+stackname = sys.argv[1]
+client = boto3.client('cloudformation')
+response = client.list_stacks()
+
+
+if stackname in [stack['StackName'] for stack in response["StackSummaries"]]:
+	print("deleting stack", sys.argv[1], "before recreating it")
+	client.delete_stack(StackName=stackname)
+	waiter = client.get_waiter('stack_delete_complete')
+	waiter.wait(StackName=sys.argv[1])
+	print(stackname, "has been deleted. creation in progress")
+else:
+	print(stackname, "doesnt exist. creation in progress")
+
+
+
+
+***********************************************************************************************************************************************************8
+aliascdn.py
+
+
+
+#!/usr/bin/python3.6
+import json
+import boto3
+with open("cloudfront.json", "r") as file:
+    data = json.load(file)
+domain = data["Distribution"]["DomainName"]
+
+client = boto3.client(
+            'route53',
+            aws_access_key_id='AKIAJE6IY***********',
+            aws_secret_access_key='cLR6Fqc*******************+AIzF'
+ )
+
+response = client.change_resource_record_sets(
+    HostedZoneId='Z1KX47X4Z9TPPK',
+    ChangeBatch={
+        'Comment': 'Create/Update ELB dns entry',
+        'Changes': [
+            {
+                'Action': 'CREATE',
+                'ResourceRecordSet': {
+                    'Name': 'punguzamizigo.com',
+                    'Type': 'A',
+                    'AliasTarget': {
+                        'HostedZoneId': 'Z2FDTNDATAQYW2',
+                        'DNSName': domain,
+                        'EvaluateTargetHealth': False
+                    }
+                }
+            },
+        ]
+    }
+)
+
+
+
+
+
+
+***********************************************************************************************************************************
+
+arecord.py
+
+
+
+
+
+
+{
+            "Comment": "CREATE a record ",
+            "Changes": [{
+            "Action": "CREATE",
+                        "ResourceRecordSet": {
+                                    "Name": "www.punguzamizigo.com",
+                                    "Type": "A",
+                                    "TTL": 300,
+                                 "ResourceRecords": [{ "Value": "54.208.234.6"}]
+}}]
+}
+
+
+
+
+
+
+
+*********************************************************************************************************************************
+
+
+cloudfront.json
+
+
+
+
+{
+    "Location": "https://cloudfront.amazonaws.com/2017-10-30/distribution/E1YAX3Z39SLAV",
+    "ETag": "E2L04LR6XLVNB5",
+    "Distribution": {
+        "Id": "E1YAX3Z39SLAV",
+        "ARN": "arn:aws:cloudfront::923903436004:distribution/E1YAX3Z39SLAV",
+        "Status": "InProgress",
+        "LastModifiedTime": "2018-11-28T14:48:59.560Z",
+        "InProgressInvalidationBatches": 0,
+        "DomainName": "d3gsuuxf0woqyt.cloudfront.net",
+        "ActiveTrustedSigners": {
+            "Enabled": false,
+            "Quantity": 0
+        },
+        "DistributionConfig": {
+            "CallerReference": "cli-1543416538-165876",
+            "Aliases": {
+                "Quantity": 0
+            },
+            "DefaultRootObject": "index.html",
+            "Origins": {
+                "Quantity": 1,
+                "Items": [
+                    {
+                        "Id": "punguzamizigo.com.s3-website-us-east-1.amazonaws.com-1543416538-941549",
+                        "DomainName": "punguzamizigo.com.s3-website-us-east-1.amazonaws.com",
+                        "OriginPath": "",
+                        "CustomHeaders": {
+                            "Quantity": 0
+                        },
+                        "CustomOriginConfig": {
+                            "HTTPPort": 80,
+                            "HTTPSPort": 443,
+                            "OriginProtocolPolicy": "http-only",
+                            "OriginSslProtocols": {
+                                "Quantity": 3,
+                                "Items": [
+                                    "TLSv1",
+                                    "TLSv1.1",
+                                    "TLSv1.2"
+                                ]
+                            },
+                            "OriginReadTimeout": 30,
+                            "OriginKeepaliveTimeout": 5
+                        }
+                    }
+                ]
+            },
+            "DefaultCacheBehavior": {
+                "TargetOriginId": "punguzamizigo.com.s3-website-us-east-1.amazonaws.com-1543416538-941549",
+                "ForwardedValues": {
+                    "QueryString": false,
+                    "Cookies": {
+                        "Forward": "none"
+                    },
+                    "Headers": {
+                        "Quantity": 0
+                    },
+                    "QueryStringCacheKeys": {
+                        "Quantity": 0
+                    }
+                },
+                "TrustedSigners": {
+                    "Enabled": false,
+                    "Quantity": 0
+                },
+                "ViewerProtocolPolicy": "allow-all",
+                "MinTTL": 0,
+                "AllowedMethods": {
+                    "Quantity": 2,
+                    "Items": [
+                        "HEAD",
+                        "GET"
+                    ],
+                    "CachedMethods": {
+                        "Quantity": 2,
+                        "Items": [
+                            "HEAD",
+                            "GET"
+                        ]
+                    }
+                },
+                "SmoothStreaming": false,
+                "DefaultTTL": 86400,
+                "MaxTTL": 31536000,
+                "Compress": false,
+                "LambdaFunctionAssociations": {
+                    "Quantity": 0
+                },
+                "FieldLevelEncryptionId": ""
+            },
+            "CacheBehaviors": {
+                "Quantity": 0
+            },
+            "CustomErrorResponses": {
+                "Quantity": 0
+            },
+            "Comment": "",
+            "Logging": {
+                "Enabled": false,
+                "IncludeCookies": false,
+                "Bucket": "",
+                "Prefix": ""
+            },
+            "PriceClass": "PriceClass_All",
+            "Enabled": true,
+            "ViewerCertificate": {
+                "CloudFrontDefaultCertificate": true,
+                "MinimumProtocolVersion": "TLSv1",
+                "CertificateSource": "cloudfront"
+            },
+            "Restrictions": {
+                "GeoRestriction": {
+                    "RestrictionType": "none",
+                    "Quantity": 0
+                }
+            },
+            "WebACLId": "",
+            "HttpVersion": "http2",
+            "IsIPV6Enabled": true
+        }
+    }
+}
+
+
+
+******************************************************************************************************************************
+ To be done on you instance:
+FYI -make sure that site files are hosted with the instance i.e /var/www/html/index.html
+
+-Install Apache2
+-Install awscli
+-Install Certbot - "sudo add-apt-repository ppa:certbot/certbot"
+-Configure with apache  -"sudo apt-get install python-certbot-apache"
+-Create Certificate -"sudo certbot --apache -d www.punguzamizigo.com -d www.punguzamizigo.com"
+
+
+
+
+
+
+
+
+
+
